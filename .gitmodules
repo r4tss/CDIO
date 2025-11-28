@@ -1,0 +1,9 @@
+[submodule "components/EZWIFI"]
+	path = components/EZWIFI
+	url = https://github.com/r4tss/EZWIFI
+[submodule "components/EZADC"]
+	path = components/EZADC
+	url = https://github.com/r4tss/EZADC
+[submodule "components/rgb_led"]
+	path = components/rgb_led
+	url = https://github.com/r4tss/rgb_led
