@@ -43,7 +43,7 @@ void socket_transmitter_sta_loop(bool (*is_wifi_connected)()) {
         }
 
         printf("sending frames.\n");
-	int i = 0;
+		int i = 0;
         while (1) {
             //double start_time = get_steady_clock_timestamp();
             if (!is_wifi_connected()) {
@@ -123,6 +123,8 @@ static void echo_task(void *arg)
     }
 }
 
+
+
 void app_main(void)
 {
 	// Init LED
@@ -133,10 +135,8 @@ void app_main(void)
 	
     // Access point
     setup_softap();
-    
 
     setup_csi();
-
     
     for(;;) {
 		vTaskDelay(10);
