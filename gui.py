@@ -1,18 +1,10 @@
 # This Python script is used to communicate with an ESP32 network and receive CSI data
 
 # SET THESE VARIABLES
-# name = "test"   # between ESPs (m)
-# category = "a"  # presence or no presence {"p", "n"}
-# 
-# path = f"{name}/{category}/"
-# 
+
+model_name = "alone"
+
 import os
-
-# Create base and label subfolders
-# true_path = os.path.join(base_path, "True")
-# false_path = os.path.join(base_path, "False")
-
-# os.makedirs(path, exist_ok=True)
 
 import serial, re
 import numpy as np
@@ -49,95 +41,99 @@ from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing import image
 import tensorflow as tf
 
-model = load_model('model.h5')
+model = load_model(f"{model_name}.keras")
 
 model.summary()
 
-#class_names = ["Activity", "No presence", "Presence"]
+activity_model = load_model(f"{model_name}_activities.keras")
 
-class_names = ["n", "p"]
+class_names = ["No presence", "Presence"]
+
+#class_names_activity = ["Run", "Sit", "Stand", "Walk"]
+class_names_activity = ["Sit", "Stand", "Walk"]
+
+confidence = 0
 
 while 1:
     data = esp_serial.readline().decode(errors='ignore')
+    # print(data)
 
-    if 'CSI DATA' in data:
-        data = re.findall(r"\(.*?\)", data)
+    if 'CSI_DATA' in data:
+        data = re.findall(r"\[(.*?)\]", data)
 
-        csi_size = len(data)
+        print(len(data))
+        print(type(data))
 
-        # print(csi_size)
+        if len(data) > 0:
+            data = data[0].split()
 
-        if csi_size == 192:
-            amplitudes = []
-            phases = []
+            csi_size = len(data)
 
-            iteration = 0
-            for tup in data:
-                tup = re.sub(r'[()\ ]', '', tup)
-                ints = tup.split(",")
-                a = 0
-                b = 0
+            # print(csi_size)
 
-                if ints[0].isdigit() or (ints[0].startswith('-') and ints[0][1:].isdigit()):
-                    a = int(ints[0])
-                if ints[1].isdigit() or (ints[1].startswith('-') and ints[1][1:].isdigit()):
-                    b = int(ints[1])
+            if csi_size == 384:
+                amplitudes = []
+                phases = []
 
-                # (iteration > 5 and iteration < 32) or (iteration > 32 and iteration < 59)
-                # or (iteration > 65 and iteration < 123) or (iteration > 133 and iteration < 191):
-                if (iteration > 65 and iteration < 123):
+                real = []
+                imag = []
+
+                buf_i = i
+                for i in range(int(csi_size/2)):
+                    real.append(int(data[i * 2]))
+                    imag.append(int(data[(i * 2) + 1]))
+
+                #if (i > 65 and i < 123):
                     # Non-logarithmic
-                    amplitudes.append(np.sqrt(a ** 2 + b ** 2))
-                    phases.append(np.atan2(b, a))
+                    amplitudes.append(np.sqrt(real[i] ** 2 + imag[i] ** 2))
+                    phases.append(np.atan2(imag[i], real[i]))
 
-                iteration += 1
-
-            amplitude.append(amplitudes)
-            phase.append(phases)
-
-            plt.clf()
+                i = buf_i
             
-            # df has shape (50, 58) -> (samples, freqs)
-            df = np.clip(np.asarray(amplitude, dtype=np.float32) * (255/35), 0, 255) # Get max 255, min 0
-            plt.pcolormesh(np.transpose(df), cmap='gray')
-            plt.axis('off')
+                amplitude.append(amplitudes)
+                phase.append(phases)
 
-            fig.canvas.flush_events()
-            plt.show()
-
-            date = datetime.datetime.now().strftime("%Y-%m-%d %H%M%S")
-            i += 1
+                plt.clf()
             
-            if img_i > 1:
-                # img = image.load_img(
-                #         "pred.png",
-                #         target_size=(57, 50),
-                #         color_mode="grayscale"
-                #         )
-                # img_array = image.img_to_array(img)
-                # img_array = tf.expand_dims(img_array, 0)
-                df = tf.expand_dims(np.transpose(df), 0)
-                prediction = model.predict(np.array(df))
-                prediction = prediction.argmax(axis=-1)[0]
-                print(f"{class_names[prediction - 1]}")
+                # df has shape (50, 58) -> (samples, frequencies)
+                df = np.clip(np.asarray(amplitude, dtype=np.float32) * (255/35), 0, 255) # Get max 255, min 0
+                plt.pcolormesh(np.transpose(df), cmap='gray', vmin=0, vmax=255)
+                plt.axis('off')
 
-                if class_names[prediction - 1] == "n":
-                    esp_serial.write(b"red")
-                else:
-                    esp_serial.write(b"green")
+                i += 1
+
+            
+                if img_i > 1:
+                    df = tf.expand_dims(np.transpose(df), 0)
+                    prediction = model.predict(np.array(df), verbose=0)
+                    prediction = prediction.argmax(axis=-1)[0]
+                    # print(f"{prediction}")
+
+                    if class_names[prediction] == "Presence":
+                        if confidence < 10:
+                            confidence += 1
+                    else:
+                        if confidence > -10:
+                            confidence -= 1
+
+                    # print(f"Confidence: {confidence}")
+                    if confidence <= 0:
+                        prediction = 0
+                        esp_serial.write(b"green")
+                        plt.title(f"{class_names[prediction]}", fontsize=50)
+                    else:
+                        prediction = 1
+                        activity_prediction = activity_model.predict(np.array(df), verbose=0)
+                        activity_prediction = activity_prediction.argmax(axis=-1)[0]
+                        esp_serial.write(b"red")
+                    
+                        plt.title(f"{class_names[prediction]}: {class_names_activity[activity_prediction]}", fontsize=50)
+
                 
-            if i == 50:
-                if img_i > 0:
-                    df = np.clip(np.asarray(amplitude, dtype=np.float32) * (255/35), 0, 255) # Get max 255, min 0
-                    # Save a 58X50 pixel image (freq x samples), matching the live plot data
-                    img = np.transpose(df)      # shape (58, 50) -> 58 px high, 50 px wide
-                    # img_norm = np.clip(img / 35.0, 0, 1)  # normalize like vmin=0, vmax=35
+                
+                if i == 50:
+                    i = 0
+                    img_i += 1
 
-                    plt.imsave("pred.png", img, cmap='gray')
-
-                print(f"Image: {img_i}")
-                if img_i == 55:
-                    exit()
-                i = 0
-                img_i += 1
-
+                fig.canvas.flush_events()
+                plt.show()

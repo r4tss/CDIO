@@ -1,10 +1,10 @@
 # This Python script is used to communicate with an ESP32 network and receive CSI data
 
 # SET THESE VARIABLES
-name = "test_v2"   # between ESPs (m)
-category = "p"  # presence or no presence or activity {"p", "n", "a"}
+name = "alone"   # between ESPs (m)
+category = "n"  # presence or no presence or activity {"p", "n", "a"}
 
-path = f"{name}/{category}/"
+path = f"../datasets/{name}/{category}/"
 
 import os
 
@@ -17,6 +17,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import collections
 import datetime
+import sys, select, tty, termios
+
+# Is there data on stdin?
+def isData():
+    return select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], [])
 
 amplitude = collections.deque(maxlen=50)
 phase = collections.deque(maxlen=50)
@@ -39,44 +44,40 @@ fig.add_axes(ax)
 fig.canvas.draw()
 plt.show(block=False)
 
-i = 0
 img_i = 0
+i = 0
 
 while 1:
     data = esp_serial.readline().decode(errors='ignore')
 
-    if 'CSI DATA' in data:
-        data = re.findall(r"\(.*?\)", data)
+    if 'CSI_DATA' in data:
+        data = re.findall(r"\[(.*?)\]", data)
+
+        data = data[0].split()
 
         csi_size = len(data)
 
         # print(csi_size)
 
-        if csi_size == 192:
+        if csi_size == 384:
             amplitudes = []
             phases = []
 
-            iteration = 0
-            for tup in data:
-                tup = re.sub(r'[()\ ]', '', tup)
-                ints = tup.split(",")
-                a = 0
-                b = 0
+            real = []
+            imag = []
 
-                if ints[0].isdigit() or (ints[0].startswith('-') and ints[0][1:].isdigit()):
-                    a = int(ints[0])
-                if ints[1].isdigit() or (ints[1].startswith('-') and ints[1][1:].isdigit()):
-                    b = int(ints[1])
+            buf_i = i
+            for i in range(int(csi_size/2)):
+                real.append(int(data[i * 2]))
+                imag.append(int(data[(i * 2) + 1]))
 
-                # (iteration > 5 and iteration < 32) or (iteration > 32 and iteration < 59)
-                # or (iteration > 65 and iteration < 123) or (iteration > 133 and iteration < 191):
-                if (iteration > 65 and iteration < 123):
+                #if (i > 65 and i < 123):
                     # Non-logarithmic
-                    amplitudes.append(np.sqrt(a ** 2 + b ** 2))
-                    phases.append(np.atan2(b, a))
+                amplitudes.append(np.sqrt(real[i] ** 2 + imag[i] ** 2))
+                phases.append(np.atan2(imag[i], real[i]))
 
-                iteration += 1
-
+            i = buf_i
+            
             amplitude.append(amplitudes)
             phase.append(phases)
 
@@ -84,7 +85,8 @@ while 1:
             
             # df has shape (50, 58) -> (samples, freqs)
             df = np.clip(np.asarray(amplitude, dtype=np.float32) * (255/35), 0, 255) # Get max 255, min 0
-            plt.pcolormesh(np.transpose(df), cmap='gray')
+            plt.pcolormesh(np.transpose(df), cmap='gray', vmin=0, vmax=255)
+            plt.title(f"Gathering data ({category})\nImage #{img_i}", fontsize=30)
             plt.axis('off')
 
             fig.canvas.flush_events()
@@ -103,8 +105,8 @@ while 1:
                     plt.imsave(f"{path}{date}.png", img, cmap='gray')
 
                 print(f"Image: {img_i}")
-                if img_i == 55:
-                    exit()
+                # if img_i == 55:
+                #     exit()
                 i = 0
                 img_i += 1
 
